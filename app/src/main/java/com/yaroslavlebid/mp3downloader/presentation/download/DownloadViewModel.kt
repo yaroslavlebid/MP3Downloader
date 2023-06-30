@@ -172,4 +172,9 @@ class DownloadViewModel @Inject constructor(
             }
         }
     }
+
+    override fun onCleared() {
+        super.onCleared()
+        downloadFileRepository.cancelAllDownloads()
+    }
 }

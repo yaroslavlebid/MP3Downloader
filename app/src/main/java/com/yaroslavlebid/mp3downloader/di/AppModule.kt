@@ -3,6 +3,14 @@ package com.yaroslavlebid.mp3downloader.di
 import android.content.Context
 import com.chaquo.python.Python
 import com.google.gson.Gson
+import com.tanodxyz.gdownload.DEF_MAX_THREADS_PER_EXECUTOR
+import com.tanodxyz.gdownload.DownloadManager
+import com.tanodxyz.gdownload.NetworkInfoProvider
+import com.tanodxyz.gdownload.connection.ConnectionManagerImpl
+import com.tanodxyz.gdownload.connection.URLConnectionFactory
+import com.tanodxyz.gdownload.executors.ScheduledBackgroundExecutorImpl
+import com.tanodxyz.gdownload.io.DefaultFileStorageHelper
+import com.tanodxyz.gdownload.worker.DataReadWriteWorkersManagerImpl
 import com.yaroslavlebid.mp3downloader.data.local.helpers.AudioConverterImpl
 import com.yaroslavlebid.mp3downloader.data.local.helpers.FileSaverImpl
 import com.yaroslavlebid.mp3downloader.data.mapper.YoutubeVideoMapper
@@ -114,12 +122,27 @@ object AppModule {
 
     @Provides
     @Singleton
+    fun provideDownloadManager(@ApplicationContext context: Context): DownloadManager {
+        val defaultFileStorageHelper = DefaultFileStorageHelper(context)
+        defaultFileStorageHelper.setFilesRoot(context.cacheDir)
+        val urlConnectionFactory = URLConnectionFactory()
+        val executor = ScheduledBackgroundExecutorImpl(corePoolSize = DEF_MAX_THREADS_PER_EXECUTOR)
+
+        return DownloadManager.Builder(context).setNetworkInfoProvider(NetworkInfoProvider(context))
+                .setDataReadWriteWorkersManager(DataReadWriteWorkersManagerImpl())
+                .setCallbacksHandler(runCallbacksOnMainThread = false)
+                .setStorageHelper(defaultFileStorageHelper)
+                .setConnectionManager(ConnectionManagerImpl(urlConnectionFactory, executor))
+                .setScheduledBackgroundExecutor(executor)
+                .build()
+    }
+    @Provides
+    @Singleton
     fun provideDownloadFileRepository(
-        api: DownloadFileApi,
         dispatcherProvider: DispatcherProvider,
-        fileHelper: FileHelper
+        downloadManager: DownloadManager
     ): DownloadFileRepository {
-        return DownloadFileRepositoryImpl(api, dispatcherProvider, fileHelper)
+        return DownloadFileRepositoryImpl(dispatcherProvider, downloadManager)
     }
 
     @Provides

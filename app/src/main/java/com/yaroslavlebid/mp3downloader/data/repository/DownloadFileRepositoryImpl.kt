@@ -1,45 +1,66 @@
 package com.yaroslavlebid.mp3downloader.data.repository
 
-import com.yaroslavlebid.mp3downloader.data.remote.DownloadFileApi
+import com.tanodxyz.gdownload.DownloadInfo
+import com.tanodxyz.gdownload.DownloadManager
+import com.tanodxyz.gdownload.DownloadProgressListener
+import com.tanodxyz.gdownload.NetworkType
 import com.yaroslavlebid.mp3downloader.domain.repostirory.DownloadFileRepository
 import com.yaroslavlebid.mp3downloader.domain.state.FileDownloadState
 import com.yaroslavlebid.mp3downloader.util.DispatcherProvider
-import com.yaroslavlebid.mp3downloader.util.FileHelper
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.channels.trySendBlocking
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.flowOn
 
 class DownloadFileRepositoryImpl(
-    private val api: DownloadFileApi,
     private val dispatcherProvider: DispatcherProvider,
-    private val fileHelper: FileHelper
+    private val downloadManager: DownloadManager
 ) : DownloadFileRepository {
     override fun downloadFile(url: String, id: String): Flow<FileDownloadState> {
-        return flow {
-            val response = api.downloadFile(url)
-            val destinationFile = fileHelper.getCachedFile(id)
-            try {
-                response.byteStream().use { inputStream ->
-                    destinationFile.outputStream().use { outputStream ->
-                        val totalBytes = response.contentLength()
-                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                        var progressBytes = 0L
-                        var bytes = inputStream.read(buffer)
-                        while (bytes >= 0) {
-                            outputStream.write(buffer, 0, bytes)
-                            progressBytes += bytes
-                            bytes = inputStream.read(buffer)
-                            emit(FileDownloadState.Downloading(progressBytes, totalBytes))
-                        }
+        return callbackFlow {
+            downloadManager.download(
+                url,
+                id,
+                NetworkType.ALL,
+                object : DownloadProgressListener {
+                    override fun onConnectionEstablished(downloadInfo: DownloadInfo?) {
+                        super.onConnectionEstablished(downloadInfo)
+                        trySendBlocking(
+                            FileDownloadState.Downloading(
+                                downloadInfo?.downloadedContentLengthBytes ?: 0L,
+                                downloadInfo?.contentLengthBytes ?: 0L
+                            )
+                        )
                     }
-                }
-                emit(FileDownloadState.Finished)
-            } catch (e: Exception) {
-                emit(FileDownloadState.Failed(e))
+
+                    override fun onDownloadFailed(downloadInfo: DownloadInfo, ex: String) {
+                        super.onDownloadFailed(downloadInfo, ex)
+                        trySendBlocking(FileDownloadState.Failed(Exception(ex)))
+                    }
+
+                    override fun onDownloadProgress(downloadInfo: DownloadInfo?) {
+                        super.onDownloadProgress(downloadInfo)
+                        trySendBlocking(
+                            FileDownloadState.Downloading(
+                                downloadInfo?.downloadedContentLengthBytes ?: 0L,
+                                downloadInfo?.contentLengthBytes ?: 0L
+                            )
+                        )
+                    }
+
+                    override fun onDownloadSuccess(downloadInfo: DownloadInfo) {
+                        super.onDownloadSuccess(downloadInfo)
+                        trySendBlocking(FileDownloadState.Finished)
+                    }
+                })
+            awaitClose {
+                downloadManager.shutDown(null)
             }
-        }
-            .flowOn(dispatcherProvider.io())
-            .distinctUntilChanged()
+        }.flowOn(dispatcherProvider.io())
+    }
+
+    override fun cancelAllDownloads() {
+        downloadManager.shutDown(null)
     }
 }
